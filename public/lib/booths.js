@@ -9,10 +9,13 @@
 export const BOOTHS = [
   {
     id: 'debian-12',
-    name: 'Debian 12',
-    codename: 'bookworm',
-    note: 'i386 端口仍在维护，是这里最新的 Debian',
-    // WebVM 官方托管的镜像，先用着；自建镜像上线后换成 Releases 地址
+    name: 'Debian 10',
+    codename: 'buster',
+    // 实测 /etc/debian_version 是 10.13、uname -m 是 i386。
+    // WebVM 官方托管的镜像就是 buster；自建的 bookworm 镜像
+    // （dockerfiles/debian-12）构建好后换成 Releases 地址，
+    // 届时这里的 name/codename 一并改回 12/bookworm。
+    note: 'WebVM 官方镜像，预装 gcc / python3 / vim',
     diskImage: 'wss://disks.webvm.io/debian_large_20230522_5044875331.ext2',
     mode: 'terminal',
     cmd: '/bin/bash',
