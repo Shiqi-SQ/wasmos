@@ -1,0 +1,11 @@
+{
+  "name": "wasmos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把各个 Linux 发行版跑在 WebAssembly 里的展示柜",
+  "scripts": {
+    "dev": "node tools/serve.mjs",
+    "check-isolated": "node tools/check-isolated.mjs"
+  }
+}

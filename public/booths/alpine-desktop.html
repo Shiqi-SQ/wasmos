@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Alpine Linux 图形桌面 — wasmos</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: #0b0d10; color: #e6e9ef;
+    font: 14px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid #1e2430; flex: none;
+  }
+  header h1 { font-size: 14px; font-weight: 600; margin: 0; }
+  header .spacer { flex: 1; }
+  #status { font-size: 12px; color: #8b95a7; font-variant-numeric: tabular-nums; }
+  #status.error { color: #f87171; }
+  #status.ready { color: #4ade80; }
+  main { flex: 1; position: relative; min-height: 0; background: #000; }
+  /* CheerpX 把 KMS 帧缓冲直接刷进这个 canvas */
+  #display { display: block; width: 100%; height: 100%; outline: none; }
+  #boot {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 16px;
+    background: #0b0d10; text-align: center; padding: 24px;
+  }
+  #boot.hidden { display: none; }
+  #boot h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  #boot p { margin: 0; color: #8b95a7; max-width: 46ch; font-size: 13px; }
+  #boot code { background: #161b24; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  .spinner {
+    width: 28px; height: 28px; border: 3px solid #1e2430;
+    border-top-color: #4a9eff; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #log {
+    flex: none; max-height: 140px; overflow-y: auto; padding: 8px 16px;
+    border-top: 1px solid #1e2430; background: #080a0d;
+    font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #6b7688;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  #log .err { color: #f87171; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Alpine Linux <span style="color:#6b7688;font-weight:400">— x86 → WASM JIT，Xorg 输出到 canvas</span></h1>
+  <div class="spacer"></div>
+  <div id="status">准备中…</div>
+</header>
+
+<main>
+  <!-- tabindex 让 canvas 能接收键盘事件 -->
+  <canvas id="display" tabindex="0"></canvas>
+  <div id="boot">
+    <div class="spinner"></div>
+    <h2>正在引导 Alpine Linux</h2>
+    <p>
+      磁盘镜像通过 WebSocket 从远端<strong>流式</strong>加载——只取实际读到的块，
+      不会整盘下载。首次引导较慢，之后会缓存在 IndexedDB 里。
+    </p>
+    <p style="font-size:12px">引导完成后<strong>点击画面</strong>再操作键鼠。</p>
+  </div>
+</main>
+
+<div id="log"></div>
+
+<script type="module">
+import * as CheerpX from 'https://cxrtnc.leaningtech.com/1.2.8/cx.esm.js';
+
+const $display = document.getElementById('display');
+const $status  = document.getElementById('status');
+const $boot    = document.getElementById('boot');
+const $log     = document.getElementById('log');
+
+function log(msg, isErr = false) {
+  const line = document.createElement('div');
+  if (isErr) line.className = 'err';
+  line.textContent = `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
+  $log.append(line);
+  $log.scrollTop = $log.scrollHeight;
+}
+
+function setStatus(text, cls = '') {
+  $status.textContent = text;
+  $status.className = cls;
+}
+
+// 这个镜像是 WebVM 官方托管的、预装了 Xorg + 桌面的 Alpine。
+// 换成别的发行版需要自己构建 ext2 —— 见 README 的说明。
+const DISK_IMAGE = 'wss://disks.webvm.io/alpine_20251007.ext2';
+
+// 低于这个尺寸时放大内部分辨率再缩回来显示。
+// 很多 X11 程序在 1024×768 以下布局会崩。
+const MIN_WIDTH = 1024;
+const MIN_HEIGHT = 768;
+
+let cx = null;
+
+function syncScreenSize() {
+  if (!cx) return;
+  const w = $display.offsetWidth;
+  const h = $display.offsetHeight;
+  if (!w || !h) return;
+  let mult = 1.0;
+  if (w < MIN_WIDTH) mult = MIN_WIDTH / w;
+  if (h < MIN_HEIGHT) mult = Math.max(mult, MIN_HEIGHT / h);
+  cx.setKmsCanvas($display, Math.floor(w * mult), Math.floor(h * mult));
+}
+
+async function boot() {
+  if (!crossOriginIsolated) {
+    setStatus('未开启 cross-origin isolation', 'error');
+    $boot.innerHTML = `<h2 style="color:#f87171">缺少 COOP/COEP 响应头</h2>
+      <p>CheerpX 需要 SharedArrayBuffer，页面必须 cross-origin isolated。
+      请用 <code>npm run dev</code> 启动，不要直接打开 html 文件。</p>`;
+    return;
+  }
+
+  try {
+    log('正在连接磁盘镜像…');
+    setStatus('加载磁盘镜像…');
+    // 只读的远端镜像，按需拉取块。
+    // 有些网络环境会掐 WebSocket，失败时降级到普通 HTTPS 重试。
+    let cloud;
+    try {
+      cloud = await CheerpX.CloudDevice.create(DISK_IMAGE);
+    } catch (e) {
+      if (!DISK_IMAGE.startsWith('wss:')) throw e;
+      log('WebSocket 失败，改用 HTTPS 重试…', true);
+      cloud = await CheerpX.CloudDevice.create('https:' + DISK_IMAGE.slice('wss:'.length));
+    }
+
+    log('初始化 IndexedDB 缓存…');
+    // 本地可读写块存储，同时充当缓存
+    const idb = await CheerpX.IDBDevice.create('wasmos-alpine');
+
+    // 把本地写入叠加在只读镜像之上 —— 这就是"改动能存下来"的原理
+    const overlay = await CheerpX.OverlayDevice.create(cloud, idb);
+
+    log('创建 Linux 实例…');
+    setStatus('引导中…');
+    cx = await CheerpX.Linux.create({
+      // 伪文件系统一个都不能少：
+      // Xorg 通过 /sys 枚举 DRM 设备、通过 /dev/pts 分配伪终端，
+      // udev 和 OpenRC 需要 /proc。少挂一个 X 会话就起不完整（表现为黑屏）。
+      mounts: [
+        { type: 'ext2', path: '/', dev: overlay },
+        { type: 'devs', path: '/dev' },
+        { type: 'devpts', path: '/dev/pts' },
+        { type: 'proc', path: '/proc' },
+        { type: 'sys', path: '/sys' },
+      ],
+    });
+
+    syncScreenSize();
+    window.addEventListener('resize', syncScreenSize);
+
+    // CheerpX 是双输出的：文本控制台和图形帧缓冲共存，靠 VT 号切换。
+    // VT 7 是 X11 的传统落脚点 —— 切到 7 才说明图形会话真正接管了。
+    cx.setActivateConsole((vt) => {
+      log(`切换到 VT ${vt}`);
+      if (vt === 7) {
+        $display.style.zIndex = '5';
+        setStatus('图形会话已激活', 'ready');
+      }
+    });
+
+    $boot.classList.add('hidden');
+    $display.focus();
+    setStatus('运行中', 'ready');
+
+    // 不走 lightdm。它启动 X 时带 -novtswitch，然后自己调 VT_ACTIVATE 切换 VT，
+    // 而这个 ioctl 在 CheerpX 里返回 Invalid argument —— 结果是 X 和 i3 都起来了，
+    // 但 VT 7 从未激活，帧缓冲一片黑。
+    // startx 自己管 VT，不依赖 VT_ACTIVATE，能绕开这个缺口。
+    log('startx 直接拉起 X + i3（绕过 lightdm 的 VT_ACTIVATE）');
+    await cx.run('/bin/sh', ['-lc', 'exec startx /usr/bin/i3 -- :0 vt7'], {
+      env: [
+        'HOME=/home/user', 'USER=user', 'SHELL=/bin/bash',
+        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+        'TERM=xterm', 'LANG=en_US.UTF-8', 'LC_ALL=C',
+        'DISPLAY=:0',
+      ],
+      cwd: '/home/user',
+      uid: 0,
+      gid: 0,
+    });
+
+    log('X 会话退出');
+    setStatus('已停止');
+  } catch (err) {
+    log(`失败：${err?.message ?? err}`, true);
+    setStatus('引导失败', 'error');
+    $boot.classList.remove('hidden');
+    $boot.innerHTML = `<h2 style="color:#f87171">引导失败</h2>
+      <p><code>${String(err?.message ?? err)}</code></p>
+      <p>详情见下方日志。</p>`;
+    console.error(err);
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
