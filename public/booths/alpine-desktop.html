@@ -40,12 +40,14 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   #log {
-    flex: none; max-height: 140px; overflow-y: auto; padding: 8px 16px;
+    flex: none; height: 200px; overflow-y: auto; padding: 8px 16px;
     border-top: 1px solid #1e2430; background: #080a0d;
-    font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; color: #6b7688;
+    font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: #7d8798;
     white-space: pre-wrap; word-break: break-all;
   }
   #log .err { color: #f87171; }
+  /* guest 输出 —— 来自 Alpine 内部的 X / i3 / OpenRC */
+  #log .guest { color: #5f6b7d; }
 </style>
 </head>
 <body>
@@ -79,12 +81,17 @@ const $status  = document.getElementById('status');
 const $boot    = document.getElementById('boot');
 const $log     = document.getElementById('log');
 
-function log(msg, isErr = false) {
+function log(msg, kind = '') {
   const line = document.createElement('div');
-  if (isErr) line.className = 'err';
-  line.textContent = `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
+  if (kind) line.className = kind;
+  // guest 输出不加时间戳前缀，避免和系统自己的日志格式打架
+  line.textContent = kind === 'guest' ? `  ${msg}` : `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
   $log.append(line);
-  $log.scrollTop = $log.scrollHeight;
+  // 只在已经贴底时才自动滚动，方便往回翻
+  const atBottom = $log.scrollHeight - $log.scrollTop - $log.clientHeight < 40;
+  if (atBottom) $log.scrollTop = $log.scrollHeight;
+  // 防止日志无限增长
+  while ($log.childElementCount > 500) $log.firstElementChild.remove();
 }
 
 function setStatus(text, cls = '') {
@@ -133,7 +140,7 @@ async function boot() {
       cloud = await CheerpX.CloudDevice.create(DISK_IMAGE);
     } catch (e) {
       if (!DISK_IMAGE.startsWith('wss:')) throw e;
-      log('WebSocket 失败，改用 HTTPS 重试…', true);
+      log('WebSocket 失败，改用 HTTPS 重试…', 'err');
       cloud = await CheerpX.CloudDevice.create('https:' + DISK_IMAGE.slice('wss:'.length));
     }
 
@@ -162,37 +169,80 @@ async function boot() {
     syncScreenSize();
     window.addEventListener('resize', syncScreenSize);
 
+    // 把 guest 的 stdout/stderr 引到页面日志区。
+    // 不接这个的话，X 和 i3 的所有输出只会进 devtools console，
+    // 页面上看起来就像卡死了。
+    let lineBuf = '';
+    const decoder = new TextDecoder();
+    cx.setCustomConsole((data) => {
+      lineBuf += decoder.decode(new Uint8Array(data), { stream: true });
+      const lines = lineBuf.split('\n');
+      lineBuf = lines.pop() ?? '';
+      for (const raw of lines) {
+        // 去掉 ANSI 转义序列，否则日志区全是乱码
+        const clean = raw.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '').trimEnd();
+        if (clean) log(clean, 'guest');
+      }
+    }, 120, 40);
+
+    // 磁盘活动 —— 引导慢通常是在拉块，不是卡死。
+    // 这是判断"还在动"最可靠的信号。
+    let blockReads = 0;
+    cx.registerCallback('diskActivity', () => {
+      blockReads++;
+      if (blockReads % 25 === 0) setStatus(`引导中… 已读 ${blockReads} 块`);
+    });
+
     // CheerpX 是双输出的：文本控制台和图形帧缓冲共存，靠 VT 号切换。
     // VT 7 是 X11 的传统落脚点 —— 切到 7 才说明图形会话真正接管了。
     cx.setActivateConsole((vt) => {
       log(`切换到 VT ${vt}`);
       if (vt === 7) {
         $display.style.zIndex = '5';
-        setStatus('图形会话已激活', 'ready');
       }
     });
 
+    // 探测 KMS 首帧：VT 切换成功不等于画面出来了。
+    // 之前调试黑屏时就是靠这个区分"X 没起"和"X 起了但没画"。
+    const probe = setInterval(() => {
+      if (!$display.width || $display.width <= 300) return;
+      const ctx = $display.getContext('2d');
+      let painted = false;
+      try {
+        const px = ctx.getImageData(0, 0, $display.width, Math.min(80, $display.height)).data;
+        for (let i = 0; i < px.length; i += 4) {
+          if (px[i] || px[i + 1] || px[i + 2]) { painted = true; break; }
+        }
+      } catch { /* canvas 可能还没准备好 */ }
+      if (painted) {
+        clearInterval(probe);
+        log(`首帧已渲染（${$display.width}×${$display.height}）`);
+        setStatus('图形会话已激活', 'ready');
+        $display.focus();
+      }
+    }, 1000);
+
     $boot.classList.add('hidden');
     $display.focus();
-    setStatus('运行中', 'ready');
+    setStatus('引导中…');
 
-    // 不走 lightdm。它启动 X 时带 -novtswitch，然后自己调 VT_ACTIVATE 切换 VT，
-    // 而这个 ioctl 在 CheerpX 里返回 Invalid argument —— 结果是 X 和 i3 都起来了，
-    // 但 VT 7 从未激活，帧缓冲一片黑。
-    // startx 自己管 VT，不依赖 VT_ACTIVATE，能绕开这个缺口。
-    log('startx 直接拉起 X + i3（绕过 lightdm 的 VT_ACTIVATE）');
-    await cx.run('/bin/sh', ['-lc', 'exec startx /usr/bin/i3 -- :0 vt7'], {
-      env: [
-        'HOME=/home/user', 'USER=user', 'SHELL=/bin/bash',
-        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-        'TERM=xterm', 'LANG=en_US.UTF-8', 'LC_ALL=C',
-        'DISPLAY=:0',
-      ],
-      cwd: '/home/user',
-      uid: 0,
-      gid: 0,
-    });
+    // 走发行版自己的完整开机流程（OpenRC → lightdm → X → i3）。
+    //
+    // 试过但失败的两条路，记录在此避免重走：
+    //  1. startx —— 它调 hostname 拼 X cookie 的 display name，hostname 在
+    //     CheerpX 里返回 "?"，xauth 拒绝创建 .Xauthority。
+    //  2. xinit + -ac —— 绕开了 xauth，X 也能完整启动（日志走完所有扩展初始化），
+    //     但 i3 报 "Cannot open display"：socket /tmp/.X11-unix/X0 已 bind，
+    //     客户端 connect() 却失败，是 CheerpX 的 AF_UNIX 支持缺口。
+    //
+    // init 路线让 X 和 i3 处在同一进程树里，走的是另一条代码路径。
+    // lightdm 会在 VT_ACTIVATE 上报 WARNING（该 ioctl 未实现），但那是警告级，
+    // 实际能否出画面由下面的首帧探测判定。
+    log('启动 /sbin/init —— 走发行版完整开机流程');
+    log('首次引导约 90–120 秒，之后有 IndexedDB 缓存会快很多');
+    await cx.run('/sbin/init', [], { uid: 0, gid: 0 });
 
+    clearInterval(probe);
     log('X 会话退出');
     setStatus('已停止');
   } catch (err) {
