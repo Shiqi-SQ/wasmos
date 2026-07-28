@@ -65,9 +65,12 @@
     <h2>正在引导 Alpine Linux</h2>
     <p>
       磁盘镜像通过 WebSocket 从远端<strong>流式</strong>加载——只取实际读到的块，
-      不会整盘下载。首次引导较慢，之后会缓存在 IndexedDB 里。
+      不会整盘下载。首次引导<strong>约 3–5 分钟</strong>，之后会缓存在 IndexedDB 里。
     </p>
-    <p style="font-size:12px">引导完成后<strong>点击画面</strong>再操作键鼠。</p>
+    <p style="font-size:12px">
+      i3 是平铺式窗口管理器，<strong>桌面本来就是纯黑</strong>，只有顶部一条状态栏。<br>
+      进去后按 <strong>Super+D</strong> 打开应用启动器，<strong>Super+Enter</strong> 开终端。
+    </p>
   </div>
 </main>
 
@@ -188,9 +191,11 @@ async function boot() {
     // 磁盘活动 —— 引导慢通常是在拉块，不是卡死。
     // 这是判断"还在动"最可靠的信号。
     let blockReads = 0;
+    let booted = false;
     cx.registerCallback('diskActivity', () => {
       blockReads++;
-      if (blockReads % 25 === 0) setStatus(`引导中… 已读 ${blockReads} 块`);
+      // 首帧渲染后不再覆盖状态栏，否则会盖掉"已就绪"
+      if (!booted && blockReads % 25 === 0) setStatus(`引导中… 已读 ${blockReads} 块`);
     });
 
     // CheerpX 是双输出的：文本控制台和图形帧缓冲共存，靠 VT 号切换。
@@ -202,21 +207,27 @@ async function boot() {
       }
     });
 
-    // 探测 KMS 首帧：VT 切换成功不等于画面出来了。
-    // 之前调试黑屏时就是靠这个区分"X 没起"和"X 起了但没画"。
+    // 探测 KMS 首帧。
+    //
+    // 必须扫全画布，不能只取顶部若干行：i3 是平铺式 WM，没开窗口时
+    // 根窗口就是纯黑，只有顶部一条约 30px 的 i3bar。早期版本只采样
+    // 前 80 行，结果随 i3bar 渲染时机时灵时不灵，被我误判成"i3 没起来"。
+    // 实际上 i3 一直是好的，只是首帧要等 3 分钟以上才出来。
     const probe = setInterval(() => {
       if (!$display.width || $display.width <= 300) return;
-      const ctx = $display.getContext('2d');
+      const ctx = $display.getContext('2d', { willReadFrequently: true });
       let painted = false;
       try {
-        const px = ctx.getImageData(0, 0, $display.width, Math.min(80, $display.height)).data;
+        const px = ctx.getImageData(0, 0, $display.width, $display.height).data;
         for (let i = 0; i < px.length; i += 4) {
           if (px[i] || px[i + 1] || px[i + 2]) { painted = true; break; }
         }
       } catch { /* canvas 可能还没准备好 */ }
       if (painted) {
         clearInterval(probe);
+        booted = true;
         log(`首帧已渲染（${$display.width}×${$display.height}）`);
+        log('i3 快捷键：Super+Enter 开终端，Super+D 应用启动器');
         setStatus('图形会话已激活', 'ready');
         $display.focus();
       }

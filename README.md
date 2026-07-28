@@ -29,13 +29,23 @@ npm run dev   # → http://localhost:8080
 
 ## 展位
 
-### Alpine Linux 图形桌面（已跑通）
+### Alpine Linux 图形桌面
 
-`public/booths/alpine-desktop.html` — 完整 i3 窗口管理器跑在 Xorg 上，帧缓冲刷进 canvas。
+`public/booths/alpine-desktop.html` — 完整 i3 窗口管理器跑在 Xorg 上，帧缓冲刷进 canvas。走 `/sbin/init` 让发行版自己的 OpenRC → lightdm → X → i3 全流程跑完。
+
+实测可用：dmenu 列出 53 个应用，能开终端、GVim、文件管理器，能玩 Mines / Cube 等 X11 小游戏，i3 平铺布局正常。
+
+**首次引导要 3–5 分钟**，耐心等。
+
+### Debian 终端
+
+`public/booths/debian-terminal.html` — `/bin/bash --login` 接到一个 `<pre>`，60 行代码。
+
+实测：`uname -a` → `Linux 4.15.0-54-cheerpx i386 GNU/Linux`，`python3 -c "print(sum(range(101)))"` → `5050`，gcc 能编译（很慢）。
 
 ### 其他发行版（待构建）
 
-Ubuntu / Arch / Rocky / Debian 走 container2wasm 终端模式。前置条件：清理磁盘 + 装 Docker。
+Ubuntu / Arch / Rocky 走 container2wasm 终端模式。前置条件：清理磁盘 + 装 Docker。
 
 ## 踩过的坑
 
@@ -54,20 +64,24 @@ localhost 下可免 HTTPS，部署到真实域名必须上 HTTPS。`tools/serve.
 
 挂载表里少写 `proc` / `sys` / `devpts` 会导致 udev 反复失败、X 会话起不完整（表现为黑屏），启动时间从 18 秒劣化到 82 秒。Xorg 通过 `/sys` 枚举 DRM 设备、通过 `/dev/pts` 分配伪终端。
 
-### lightdm 在 CheerpX 上起不来
+### 黑屏的真相：耐心 + 别只采样顶部像素
 
-Alpine 官方镜像的 lightdm 配置本身是对的（autologin 到 i3，无需 greeter），X 也能成功初始化 modesetting 驱动、识别虚拟键鼠。但它启动 X 时带 `-novtswitch`，然后自己调 `VT_ACTIVATE` 切换 VT——**这个 ioctl 在 CheerpX 里返回 `Invalid argument`**：
+调试图形展位时我绕了很大的弯，把三件事误判成根因，全都不是：
 
-```
-DEBUG: Activating VT 7
-WARNING: Error using VT_ACTIVATE 7 on /dev/tty0: Invalid argument
-```
+- ~~`startx` 的 `hostname` 返回 `?` 导致 xauth 拒建 `.Xauthority`~~ —— 报错真实存在，但不致命
+- ~~`i3: Cannot open display` 是 CheerpX 的 AF_UNIX 缺口~~ —— 实际是 X 还没就绪就去连（X 要 45–75 秒初始化）
+- ~~shell 后台作业在 CheerpX 里活不下来~~ —— 被上一轮残留的 `Xorg.0.log` 污染了检测
 
-结果是 X 和 i3 都在跑，但 VT 7 从未激活，帧缓冲一片黑。绕过办法是不走 lightdm，直接 `startx`——它自己管 VT，不依赖 `VT_ACTIVATE`。
+**真正的原因有两个**：
+
+1. **i3 是平铺式 WM，没开窗口时桌面本来就是纯黑**，只有顶部约 30px 的 i3bar。看到黑屏是正常现象，不是故障。
+2. **我的首帧探测只扫了顶部 80 行像素**，随 i3bar 渲染时机时灵时不灵；加上每次只等 2–3 分钟就判定失败，而首帧实际要 3 分钟以上才出来。
+
+教训：判断"渲染成功"要扫全画布，判断"失败"前要给够时间。lightdm 的 `VT_ACTIVATE` 确实会报 WARNING（该 ioctl 未实现），但那只是警告，不影响最终出画面。
 
 ### 无害的报错
 
-`MESA-LOADER: failed to open swrast` 那一堆只是 GLX 硬件加速不可用，2D 的 X 完全能跑，i3 不需要 GL。
+`MESA-LOADER: failed to open swrast` 那一堆只是 GLX 硬件加速不可用，2D 的 X 完全能跑，i3 不需要 GL。同理 `couldn't get display device` 后面紧跟的是 `(II) modeset(0): glamor initialization failed` —— II 是信息级，X 会回退到软件渲染继续跑。
 
 ### 图形模式的本质
 

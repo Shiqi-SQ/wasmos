@@ -59,12 +59,22 @@
       <span class="tag">图形桌面</span>
     </div>
     <p>完整的 i3 窗口管理器跑在 Xorg 上，帧缓冲直接刷进 canvas。
-       CheerpX 把 x86 指令 JIT 成 WebAssembly，发行版本身一行代码没改。</p>
+       dmenu 里有 53 个应用，能开终端、GVim、文件管理器，也能玩扫雷。
+       首次引导 3–5 分钟；i3 是平铺式 WM，桌面本来就是纯黑的。</p>
+  </a>
+
+  <a class="booth" href="/booths/debian-terminal.html">
+    <div class="row">
+      <span class="name">Debian 10</span>
+      <span class="tag">终端</span>
+    </div>
+    <p>bash 直接接到页面，60 行代码。python3、gcc、vim 都能跑
+       —— 全是未修改的 x86 二进制，由 CheerpX 的 JIT 翻译成 WebAssembly。</p>
   </a>
 
   <div class="booth disabled">
     <div class="row">
-      <span class="name">Ubuntu / Arch / Rocky / Debian</span>
+      <span class="name">Ubuntu / Arch / Rocky</span>
       <span class="tag wip">待构建</span>
     </div>
     <p>用 container2wasm 把 Docker 官方镜像转成 wasm，走终端模式。
