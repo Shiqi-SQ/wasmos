@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<!--
+  JWM 配置。目标是让它看起来像一台刚开机的普通电脑：
+  干净的桌面、底部任务栏、左下角开始菜单。
+
+  刻意不做的事：不自动打开任何窗口。真实电脑开机后就是空桌面，
+  等用户自己去点 —— 替用户开窗反而破坏了"这是台真机器"的感觉。
+-->
+<JWM>
+
+  <!-- 开始菜单 -->
+  <RootMenu onroot="12">
+    <Program icon="terminal" label="终端">xterm</Program>
+    <Separator/>
+    <Menu icon="folder" label="附件">
+      <Program icon="calc" label="计算器">xcalc</Program>
+      <Program icon="clock" label="时钟">xclock</Program>
+      <Program label="xeyes">xeyes</Program>
+    </Menu>
+    <Menu icon="folder" label="系统">
+      <Program label="进程 (top)">xterm -e top</Program>
+      <Program label="磁盘用量">xterm -e sh -c 'df -h; echo; read -p "按回车关闭"'</Program>
+      <Program label="系统信息">xterm -e sh -c 'uname -a; echo; cat /etc/os-release; echo; read -p "按回车关闭"'</Program>
+    </Menu>
+    <Separator/>
+    <Restart label="重启窗口管理器" icon="reload"/>
+    <Exit label="注销" confirm="true" icon="exit"/>
+  </RootMenu>
+
+  <!-- 底部任务栏 —— 这是"像个系统"最关键的一条 -->
+  <Tray x="0" y="-1" height="30" autohide="off">
+    <TrayButton popup="菜单" label=" 应用 ">root:12</TrayButton>
+    <Spacer width="4"/>
+    <Pager labeled="true"/>
+    <TaskList maxwidth="220"/>
+    <Dock/>
+    <Clock format="%H:%M"><Button mask="123">xclock</Button></Clock>
+  </Tray>
+
+  <!-- 窗口样式 -->
+  <WindowStyle>
+    <Font>Sans-9</Font>
+    <Width>4</Width>
+    <Height>22</Height>
+    <Corner>3</Corner>
+    <Foreground>#d8dee9</Foreground>
+    <Background>#3b4252</Background>
+    <Outline>#2e3440</Outline>
+    <Active>
+      <Foreground>#eceff4</Foreground>
+      <Background>#4c7899</Background>
+      <Outline>#2e3440</Outline>
+    </Active>
+  </WindowStyle>
+
+  <TrayStyle group="true" list="all">
+    <Font>Sans-9</Font>
+    <Foreground>#d8dee9</Foreground>
+    <Background>#2e3440</Background>
+    <Outline>#242933</Outline>
+    <Active>
+      <Foreground>#eceff4</Foreground>
+      <Background>#4c7899</Background>
+    </Active>
+  </TrayStyle>
+
+  <MenuStyle>
+    <Font>Sans-9</Font>
+    <Foreground>#d8dee9</Foreground>
+    <Background>#3b4252</Background>
+    <Outline>#2e3440</Outline>
+    <Active>
+      <Foreground>#eceff4</Foreground>
+      <Background>#4c7899</Background>
+    </Active>
+  </MenuStyle>
+
+  <PopupStyle>
+    <Font>Sans-9</Font>
+    <Foreground>#d8dee9</Foreground>
+    <Background>#3b4252</Background>
+  </PopupStyle>
+
+  <!-- 桌面：4 个工作区，和真机一样可以切换 -->
+  <Desktops width="4" height="1">
+    <Background type="solid">#1a2332</Background>
+  </Desktops>
+
+  <!-- 双击标题栏最大化、右键菜单等标准行为 -->
+  <DoubleClickSpeed>400</DoubleClickSpeed>
+  <DoubleClickDelta>2</DoubleClickDelta>
+  <FocusModel>sloppy</FocusModel>
+  <SnapMode distance="10">border</SnapMode>
+  <MoveMode>opaque</MoveMode>
+  <ResizeMode>opaque</ResizeMode>
+
+  <Key key="Up">up</Key>
+  <Key key="Down">down</Key>
+  <Key key="Right">right</Key>
+  <Key key="Left">left</Key>
+  <Key key="Return">select</Key>
+  <Key key="Escape">escape</Key>
+  <Key mask="A" key="Tab">nextstacked</Key>
+  <Key mask="A" key="F4">close</Key>
+  <Key mask="4" key="Return">exec:xterm</Key>
+
+</JWM>

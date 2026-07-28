@@ -1,0 +1,40 @@
+# Alpine 图形桌面 —— 面向"一眼认得出是台电脑"优化
+#
+# 关键取舍：
+#  - 用 JWM 而非 i3。i3 是平铺式，没开窗口时屏幕纯黑，
+#    访客会以为没加载出来（我们自己就误判过三次）。
+#    JWM 有任务栏、开始菜单、壁纸，一眼就知道是个系统。
+#  - 不装 lightdm。它启动 X 后靠 VT_ACTIVATE ioctl 切换 VT，
+#    而 CheerpX 未实现该调用，会卡在黑屏。直接由 xinit 拉起。
+#  - 不装 gcc/python3。要演示编译去终端展位，桌面展位追求启动快。
+#  - 壁纸用 xsetroot 画纯色而非图片文件，省几十 MB。
+FROM i386/alpine:3.19
+
+RUN apk add --no-cache \
+      # X server 与输入驱动。modesetting 驱动内置在 xorg-server 里，
+      # CheerpX 模拟的正是 DRM/KMS 显卡，所以不需要额外显示驱动。
+      xorg-server xf86-input-libinput xinit \
+      xrandr xsetroot xprop \
+      # 窗口管理器：轻量但有完整桌面观感
+      jwm \
+      # 字体 —— 缺字体的话 JWM 菜单和标题栏会是空白方块
+      font-dejavu ttf-dejavu \
+      # 几个能打开看效果的程序
+      xterm xcalc xclock xeyes \
+      # 基础 shell 环境
+      bash busybox-extras \
+ && rm -rf /var/cache/apk/*
+
+RUN adduser -D -u 1000 -s /bin/bash user
+
+COPY rootfs/jwmrc /etc/system.jwmrc
+COPY rootfs/xinitrc /home/user/.xinitrc
+RUN chmod +x /home/user/.xinitrc \
+ && chown user:user /home/user/.xinitrc \
+ # root 也放一份 —— CheerpX 以 uid 0 启动 X（需要访问 KMS 设备）
+ && cp /home/user/.xinitrc /root/.xinitrc \
+ && chmod +x /root/.xinitrc
+
+# 注意：这个 CMD 只是文档作用。CheerpX 通过 cx.run() 显式指定启动命令，
+# 实际执行的是 public/lib/booths.js 里配置的 cmd/args。
+CMD ["/usr/bin/xinit", "/root/.xinitrc", "--", "/usr/bin/X", ":0", "vt7", "-ac", "-nolisten", "tcp"]

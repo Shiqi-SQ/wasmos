@@ -9,20 +9,16 @@ on:
         description: 要构建的展位（对应 dockerfiles/ 下的文件名）
         required: true
         type: choice
-        options: [debian-12, ubuntu-1804, centos-7, all]
-        default: debian-12
-      size:
-        description: ext2 镜像大小
-        required: false
-        default: 1500M
+        options: [alpine-desktop, debian-12, ubuntu-1804, centos-7, all]
+        default: alpine-desktop
 
 permissions:
-  contents: write   # 需要写 Releases
+  contents: read
 
 jobs:
-  # 先把要构建的目标算成一个 JSON 数组，让矩阵只起需要的 runner。
-  # 之前用矩阵跑全部 + step 里 if 跳过，会白起 3 个 runner
-  # 且跳过的项也报 success，看不出到底构建了什么。
+  # 先算出要构建的目标，让矩阵只起需要的 runner。
+  # 之前矩阵固定跑全部、靠 step 里 if 跳过，会白起 runner，
+  # 且被跳过的项也报 success，看不出实际构建了什么。
   plan:
     runs-on: ubuntu-latest
     outputs:
@@ -33,7 +29,7 @@ jobs:
           TARGET: ${{ inputs.target }}
         run: |
           if [ "$TARGET" = "all" ]; then
-            echo 'targets=["debian-12","ubuntu-1804","centos-7"]' >> "$GITHUB_OUTPUT"
+            echo 'targets=["alpine-desktop","debian-12","ubuntu-1804","centos-7"]' >> "$GITHUB_OUTPUT"
           else
             echo "targets=[\"$TARGET\"]" >> "$GITHUB_OUTPUT"
           fi
@@ -57,21 +53,30 @@ jobs:
           sudo apt-get install -y qemu-user-static binfmt-support || true
 
       - name: 构建容器镜像
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           # --platform 与 --arch 互斥，只能用其一
           buildah build --platform linux/386 \
-            -f dockerfiles/${{ matrix.target }} \
-            -t wasmos-${{ matrix.target }} .
+            -f "dockerfiles/$TARGET" -t "wasmos-$TARGET" .
 
       - name: 导出为 ext2
         env:
-          # size 是自由文本输入，经环境变量传入而非直接插进命令
-          IMG_SIZE: ${{ inputs.size }}
           TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          IMG="$TARGET.ext2"
-          # podman unshare 让后续操作以容器内 root 身份进行，避免文件属主错乱
+          # 每个目标给不同容量。实测 1500M 的 Debian 镜像里只有 503MB
+          # 是真实数据，其余是空块 —— 白占存储和上传时间。
+          # 留出约 2 倍余量供用户 apt install。
+          case "$TARGET" in
+            alpine-desktop) SIZE=600M  ;;
+            debian-12)      SIZE=900M  ;;
+            ubuntu-1804)    SIZE=900M  ;;
+            centos-7)       SIZE=900M  ;;
+            *)              SIZE=1000M ;;
+          esac
+          echo "目标容量 $SIZE"
+          # podman unshare 让操作以容器内 root 身份进行，避免文件属主错乱
           podman unshare bash -euo pipefail -c '
             CT=$(buildah from "wasmos-$1")
             MNT=$(buildah mount "$CT")
@@ -80,24 +85,33 @@ jobs:
             mkfs.ext2 -L wasmos -b 4096 -d "$MNT" "$1.ext2" "$2"
             buildah umount "$CT"
             buildah rm "$CT"
-          ' _ "$TARGET" "$IMG_SIZE"
-          ls -lh "$IMG"
+          ' _ "$TARGET" "$SIZE"
+          ls -lh "$TARGET.ext2"
+          # 报告实际占用，便于下次调整容量
+          dumpe2fs -h "$TARGET.ext2" 2>/dev/null | grep -E "Block count|Free blocks|Block size" || true
           # CheerpX 上限 2GB，超了直接失败而不是等运行时才发现
-          SIZE=$(stat -c%s "$IMG")
-          if [ "$SIZE" -gt 2147483648 ]; then
-            echo "::error::镜像 $SIZE 字节，超过 CheerpX 的 2GB 上限"
+          if [ "$(stat -c%s "$TARGET.ext2")" -gt 2147483648 ]; then
+            echo "::error::镜像超过 CheerpX 的 2GB 上限"
             exit 1
           fi
 
-      - name: 发布到 Releases
+      - name: 上传到 COS
         env:
-          GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
+          SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          BUCKET: ${{ secrets.COS_BUCKET }}
+          REGION: ${{ secrets.COS_REGION }}
         run: |
-          # 固定 tag，镜像更新时覆盖同名资源。
-          # 放 Releases 而非仓库里：不占仓库体积，且支持 HTTP Range 请求
-          # —— 这正是 CheerpX 按需拉块的前提。
-          gh release create ext2-images --title "ext2 磁盘镜像" \
-            --notes "CheerpX 用的 i386 根文件系统镜像，由 dockerfiles/ 构建。" \
-            2>/dev/null || true
-          gh release upload ext2-images "$TARGET.ext2" --clobber
+          set -euo pipefail
+          if [ -z "${SECRET_ID:-}" ]; then
+            echo "::error::未配置 COS_SECRET_ID 等 Secrets，跳过上传"
+            exit 1
+          fi
+          pip install --quiet coscmd
+          coscmd config -a "$SECRET_ID" -s "$SECRET_KEY" -b "$BUCKET" -r "$REGION"
+          # 放 COS 而非 GitHub Releases —— 后者不发 CORS 头，浏览器拿不到。
+          # COS 需要在控制台配好跨域规则，且 Expose-Headers 必须包含
+          # Content-Length 和 Content-Range，否则 CheerpX 读不到磁盘大小。
+          coscmd upload "$TARGET.ext2" "wasmos/$TARGET.ext2"
+          echo "已上传 → https://sh-p1.furryfans.cn/wasmos/$TARGET.ext2"

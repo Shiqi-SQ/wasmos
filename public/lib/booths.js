@@ -6,7 +6,37 @@
 //
 // diskImage 为 null 表示镜像还没构建，展位在首页显示为待构建。
 
+// 镜像分发地址。放 COS 而非 GitHub Releases —— 后者不发 CORS 头，
+// 浏览器拿不到（curl 能拿到是因为不受同源策略约束，这个坑很隐蔽）。
+const CDN = 'https://sh-p1.furryfans.cn/wasmos';
+
 export const BOOTHS = [
+  {
+    id: 'alpine-desktop-own',
+    name: 'Alpine 桌面',
+    codename: '3.19 · JWM',
+    note: '自建镜像 · 有壁纸、任务栏、开始菜单',
+    diskImage: `${CDN}/alpine-desktop.ext2`,
+    mode: 'graphical',
+    // 直接 xinit 拉起 X + JWM。不走 lightdm（依赖未实现的 VT_ACTIVATE），
+    // 也不走 startx（它调 hostname 拼 X cookie，而 hostname 在 CheerpX 里返回 "?"）。
+    cmd: '/usr/bin/xinit',
+    args: ['/root/.xinitrc', '--', '/usr/bin/X', ':0', 'vt7', '-ac', '-nolisten', 'tcp'],
+    uid: 0,
+    gid: 0,
+  },
+  {
+    id: 'debian-12-own',
+    name: 'Debian 12',
+    codename: 'bookworm',
+    note: '自建镜像 · gcc / python3 / vim',
+    diskImage: `${CDN}/debian-12.ext2`,
+    mode: 'terminal',
+    cmd: '/bin/bash',
+    args: ['--login'],
+    uid: 1000,
+    gid: 1000,
+  },
   {
     id: 'debian-12',
     name: 'Debian 10',
