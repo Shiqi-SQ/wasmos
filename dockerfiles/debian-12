@@ -1,0 +1,16 @@
+# Debian 12 (bookworm) i386 —— 终端环境
+#
+# 注意 i386/ 前缀：CheerpX 只能跑 32 位 x86 的根文件系统。
+# 用 amd64 镜像构建出的 ext2 装不上，这是硬限制。
+FROM i386/debian:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      bash coreutils vim-tiny less curl ca-certificates \
+      python3 gcc libc6-dev make git \
+ && rm -rf /var/lib/apt/lists/*
+
+# CheerpX 以 uid 1000 运行 shell，镜像里得有这个用户
+RUN useradd -m -u 1000 -s /bin/bash user
+
+WORKDIR /home/user
+CMD ["/bin/bash", "--login"]

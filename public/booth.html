@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>展位 — wasmos</title>
+<!-- 必须在所有脚本之前，且必须同源、不能走 CDN。
+     它通过 Service Worker 注入 COOP/COEP，因为 GitHub Pages 不让设响应头。
+     首次加载会强制刷新一次页面，这是它注入头的方式。 -->
+<script src="./coi-serviceworker.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100vh; display:flex; flex-direction:column;
+         background:#0b0d10; color:#e6e9ef;
+         font:14px/1.5 -apple-system, "PingFang SC", system-ui, sans-serif; }
+  header { display:flex; align-items:center; gap:10px; padding:9px 14px;
+           border-bottom:1px solid #1e2430; flex:none; }
+  header a { color:#6b7688; text-decoration:none; font-size:13px; }
+  header a:hover { color:#a8b3c5; }
+  header h1 { font-size:14px; font-weight:600; margin:0; }
+  header .meta { color:#6b7688; font-weight:400; font-size:13px; }
+  .spacer { flex:1; }
+  #status { font-size:12px; color:#8b95a7; font-variant-numeric:tabular-nums; }
+  #status.ready { color:#4ade80; }
+  #status.error { color:#f87171; }
+  main { flex:1; position:relative; min-height:0; background:#000; overflow:hidden; }
+  #display { display:block; width:100%; height:100%; outline:none; }
+  #console { margin:0; padding:8px 12px; height:100%; overflow-y:auto; outline:none;
+             font:13px/1.35 ui-monospace, Menlo, monospace; color:#ccc;
+             white-space:pre-wrap; word-break:break-all; }
+  #boot { position:absolute; inset:0; display:flex; flex-direction:column;
+          align-items:center; justify-content:center; gap:14px; text-align:center;
+          background:#0b0d10; padding:24px; }
+  #boot.hidden { display:none; }
+  #boot h2 { margin:0; font-size:17px; }
+  #boot p { margin:0; color:#8b95a7; max-width:44ch; font-size:13px; }
+  .spinner { width:26px; height:26px; border:3px solid #1e2430; border-top-color:#4a9eff;
+             border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #log { flex:none; height:150px; overflow-y:auto; padding:7px 14px;
+         border-top:1px solid #1e2430; background:#080a0d;
+         font:11px/1.55 ui-monospace, Menlo, monospace; color:#7d8798;
+         white-space:pre-wrap; word-break:break-all; }
+  #log .err { color:#f87171; }
+  #log .guest { color:#5f6b7d; }
+  code { background:#161b24; padding:1px 5px; border-radius:3px; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <a href="./">← wasmos</a>
+  <h1 id="title">…</h1>
+  <span class="meta" id="subtitle"></span>
+  <div class="spacer"></div>
+  <div id="status">准备中…</div>
+</header>
+
+<main id="stage">
+  <div id="boot">
+    <div class="spinner"></div>
+    <h2 id="boot-title">引导中</h2>
+    <p id="boot-desc"></p>
+  </div>
+</main>
+
+<div id="log"></div>
+
+<script type="module">
+import { byId } from './lib/booths.js';
+import { boot } from './lib/cheerpx-boot.js';
+
+const $log = document.getElementById('log');
+const $status = document.getElementById('status');
+const $boot = document.getElementById('boot');
+const $stage = document.getElementById('stage');
+
+const ui = {
+  log(msg, kind = '') {
+    const line = document.createElement('div');
+    if (kind) line.className = kind;
+    line.textContent = kind === 'guest'
+      ? `  ${msg}`
+      : `[${new Date().toISOString().slice(11, 19)}] ${msg}`;
+    $log.append(line);
+    const atBottom = $log.scrollHeight - $log.scrollTop - $log.clientHeight < 40;
+    if (atBottom) $log.scrollTop = $log.scrollHeight;
+    while ($log.childElementCount > 400) $log.firstElementChild.remove();
+  },
+  setStatus(text, cls = '') { $status.textContent = text; $status.className = cls; },
+  onReady() { $boot.classList.add('hidden'); },
+};
+
+const id = new URLSearchParams(location.search).get('id') ?? 'debian-12';
+const cfg = byId(id);
+
+if (!cfg) {
+  document.getElementById('title').textContent = '未知展位';
+  ui.setStatus(`没有 id 为 ${id} 的展位`, 'error');
+} else {
+  document.title = `${cfg.name} — wasmos`;
+  document.getElementById('title').textContent = cfg.name;
+  document.getElementById('subtitle').textContent =
+    [cfg.codename, cfg.note].filter(Boolean).join(' · ');
+  document.getElementById('boot-title').textContent = `引导 ${cfg.name}`;
+  document.getElementById('boot-desc').innerHTML = cfg.mode === 'graphical'
+    ? '磁盘镜像按需流式加载，首次引导 <strong>3–5 分钟</strong>。<br>' +
+      'i3 是平铺式窗口管理器，<strong>桌面本来就是纯黑</strong>，只有顶部一条状态栏。'
+    : '磁盘镜像按需流式加载，只取实际读到的块。<br>引导完成后点击画面即可输入。';
+
+  // 终端用 <pre>，图形用 <canvas>
+  const target = document.createElement(cfg.mode === 'graphical' ? 'canvas' : 'pre');
+  target.id = cfg.mode === 'graphical' ? 'display' : 'console';
+  target.tabIndex = 0;
+  $stage.prepend(target);
+
+  boot(cfg, ui, target).catch((err) => {
+    ui.log(`失败：${err?.message ?? err}`, 'err');
+    ui.setStatus('引导失败', 'error');
+    $boot.classList.remove('hidden');
+    $boot.innerHTML = `<h2 style="color:#f87171">引导失败</h2>
+      <p><code>${String(err?.message ?? err)}</code></p>`;
+    console.error(err);
+  });
+}
+</script>
+</body>
+</html>

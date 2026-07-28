@@ -1,0 +1,98 @@
+﻿name: 构建 ext2 磁盘镜像
+
+# 手动触发。构建一次很慢（要拉 i386 基础镜像 + 装包 + 造文件系统），
+# 且产物是 GB 级的，不适合每次 push 都跑。
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 要构建的展位（对应 dockerfiles/ 下的文件名）
+        required: true
+        type: choice
+        options: [debian-12, ubuntu-1804, centos-7, all]
+        default: debian-12
+      size:
+        description: ext2 镜像大小
+        required: false
+        default: 1500M
+
+permissions:
+  contents: write   # 需要写 Releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # all 时构建全部，否则只构建选中的那个（多余项在 step 里跳过）
+        target: [debian-12, ubuntu-1804, centos-7]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 判断是否需要构建本项
+        id: check
+        run: |
+          if [ "${{ inputs.target }}" = "all" ] || [ "${{ inputs.target }}" = "${{ matrix.target }}" ]; then
+            echo "run=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=no" >> "$GITHUB_OUTPUT"
+            echo "跳过 ${{ matrix.target }}"
+          fi
+
+      - name: 安装构建工具
+        if: steps.check.outputs.run == 'yes'
+        run: |
+          sudo apt-get update
+          # buildah/podman 用来构建和展开容器；e2fsprogs 提供 mkfs.ext2
+          sudo apt-get install -y buildah podman e2fsprogs
+          # 让 x86_64 的 runner 能跑 i386 镜像
+          sudo apt-get install -y qemu-user-static binfmt-support || true
+
+      - name: 构建容器镜像
+        if: steps.check.outputs.run == 'yes'
+        run: |
+          buildah build --arch 386 --platform linux/386 \
+            -f dockerfiles/${{ matrix.target }} \
+            -t wasmos-${{ matrix.target }} .
+
+      - name: 导出为 ext2
+        if: steps.check.outputs.run == 'yes'
+        env:
+          # size 是自由文本输入，经环境变量传入而非直接插进命令
+          IMG_SIZE: ${{ inputs.size }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          IMG="$TARGET.ext2"
+          # podman unshare 让后续操作以容器内 root 身份进行，避免文件属主错乱
+          podman unshare bash -euo pipefail -c '
+            CT=$(buildah from "wasmos-$1")
+            MNT=$(buildah mount "$CT")
+            echo "容器根目录挂在 $MNT"
+            # mkfs.ext2 -d 直接把一个目录塞进新建的文件系统
+            mkfs.ext2 -L wasmos -b 4096 -d "$MNT" "$1.ext2" "$2"
+            buildah umount "$CT"
+            buildah rm "$CT"
+          ' _ "$TARGET" "$IMG_SIZE"
+          ls -lh "$IMG"
+          # CheerpX 上限 2GB，超了直接失败而不是等运行时才发现
+          SIZE=$(stat -c%s "$IMG")
+          if [ "$SIZE" -gt 2147483648 ]; then
+            echo "::error::镜像 $SIZE 字节，超过 CheerpX 的 2GB 上限"
+            exit 1
+          fi
+
+      - name: 发布到 Releases
+        if: steps.check.outputs.run == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          # 固定 tag，镜像更新时覆盖同名资源。
+          # 放 Releases 而非仓库里：不占仓库体积，且支持 HTTP Range 请求
+          # —— 这正是 CheerpX 按需拉块的前提。
+          gh release create ext2-images --title "ext2 磁盘镜像" \
+            --notes "CheerpX 用的 i386 根文件系统镜像，由 dockerfiles/ 构建。" \
+            2>/dev/null || true
+          gh release upload ext2-images "$TARGET.ext2" --clobber

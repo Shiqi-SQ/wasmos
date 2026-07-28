@@ -1,0 +1,16 @@
+# CentOS 7 i386 —— 2024 年 6 月 EOL
+#
+# EOL 之后官方镜像源全部下线，yum 会 404。
+# 归档在 vault.centos.org，且 i386 属于 altarch。
+FROM i386/centos:7
+
+RUN sed -i -e 's|^mirrorlist=|#mirrorlist=|g' \
+           -e 's|^#baseurl=http://mirror.centos.org/centos|baseurl=http://vault.centos.org/altarch|g' \
+           /etc/yum.repos.d/CentOS-*.repo \
+ && yum install -y bash coreutils vim-minimal less python3 gcc make \
+ && yum clean all && rm -rf /var/cache/yum
+
+RUN useradd -m -u 1000 -s /bin/bash user
+
+WORKDIR /home/user
+CMD ["/bin/bash", "--login"]

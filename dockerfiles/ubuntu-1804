@@ -1,0 +1,17 @@
+# Ubuntu 18.04 (bionic) i386 —— Ubuntu 最后一个支持 i386 的版本
+#
+# 18.04 已于 2023 年结束标准支持，归档源在 old-releases.ubuntu.com。
+# 直接 apt-get update 会失败，必须先换源。
+FROM i386/ubuntu:bionic
+
+RUN sed -i -e 's|archive.ubuntu.com|old-releases.ubuntu.com|g' \
+           -e 's|security.ubuntu.com|old-releases.ubuntu.com|g' \
+           /etc/apt/sources.list \
+ && apt-get update && apt-get install -y --no-install-recommends \
+      bash coreutils vim-tiny less python3 gcc libc6-dev make \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -u 1000 -s /bin/bash user
+
+WORKDIR /home/user
+CMD ["/bin/bash", "--login"]

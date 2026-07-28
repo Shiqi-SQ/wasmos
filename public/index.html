@@ -4,46 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wasmos — 在浏览器里跑 Linux 发行版</title>
+<script src="./coi-serviceworker.js"></script>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body {
-    margin: 0; min-height: 100vh; background: #0b0d10; color: #e6e9ef;
-    font: 15px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif;
-    padding: 48px 24px;
-  }
-  main { max-width: 760px; margin: 0 auto; }
-  h1 { font-size: 26px; margin: 0 0 8px; letter-spacing: -0.01em; }
-  .sub { color: #8b95a7; margin: 0 0 40px; font-size: 14px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
-       color: #6b7688; margin: 36px 0 14px; font-weight: 600; }
-  .booth {
-    display: block; text-decoration: none; color: inherit;
-    border: 1px solid #1e2430; border-radius: 10px; padding: 18px 20px;
-    margin-bottom: 12px; transition: border-color .15s, background .15s;
-  }
-  .booth:hover { border-color: #2f3a4d; background: #10141b; }
-  .booth .row { display: flex; align-items: baseline; gap: 10px; }
-  .booth .name { font-size: 16px; font-weight: 600; }
-  .booth .tag {
-    font-size: 11px; padding: 2px 7px; border-radius: 4px;
-    background: #1a2740; color: #6da8ff; font-weight: 500;
-  }
-  .booth .tag.wip { background: #2a2416; color: #d4a24a; }
-  .booth p { margin: 6px 0 0; color: #8b95a7; font-size: 13px; }
-  .booth.disabled { opacity: .45; pointer-events: none; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
-  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #161b24; vertical-align: top; }
-  th { color: #6b7688; font-weight: 600; font-size: 11px;
-       text-transform: uppercase; letter-spacing: 0.05em; }
-  td:first-child { color: #e6e9ef; font-weight: 500; white-space: nowrap; }
-  td { color: #8b95a7; }
-  code { background: #161b24; padding: 1px 5px; border-radius: 3px;
-         font: 12px ui-monospace, Menlo, monospace; color: #a8b3c5; }
-  .note { border-left: 2px solid #2f3a4d; padding-left: 14px; color: #8b95a7;
-          font-size: 13px; margin: 20px 0; }
-  footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid #161b24;
-           color: #57606f; font-size: 12px; }
+  body { margin:0; min-height:100vh; background:#0b0d10; color:#e6e9ef;
+         font:15px/1.7 -apple-system, "PingFang SC", system-ui, sans-serif;
+         padding:44px 24px; }
+  main { max-width:740px; margin:0 auto; }
+  h1 { font-size:25px; margin:0 0 6px; letter-spacing:-0.01em; }
+  .sub { color:#8b95a7; margin:0 0 36px; font-size:14px; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
+       color:#6b7688; margin:34px 0 12px; font-weight:600; }
+  .booth { display:block; text-decoration:none; color:inherit;
+           border:1px solid #1e2430; border-radius:9px; padding:15px 17px;
+           margin-bottom:9px; transition:border-color .15s, background .15s; }
+  .booth:hover { border-color:#2f3a4d; background:#10141b; }
+  .booth.disabled { opacity:.4; pointer-events:none; }
+  .booth .row { display:flex; align-items:baseline; gap:9px; flex-wrap:wrap; }
+  .booth .name { font-size:15px; font-weight:600; }
+  .booth .tag { font-size:11px; padding:2px 7px; border-radius:4px;
+                background:#1a2740; color:#6da8ff; }
+  .booth .tag.wip { background:#2a2416; color:#d4a24a; }
+  .booth .note { margin:5px 0 0; color:#8b95a7; font-size:13px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 9px; border-bottom:1px solid #161b24; vertical-align:top; }
+  th { color:#6b7688; font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  td { color:#8b95a7; }
+  td:first-child { color:#e6e9ef; font-weight:500; white-space:nowrap; }
+  code { background:#161b24; padding:1px 5px; border-radius:3px;
+         font:12px ui-monospace, Menlo, monospace; color:#a8b3c5; }
+  .note-box { border-left:2px solid #2f3a4d; padding-left:13px; color:#8b95a7;
+              font-size:13px; margin:18px 0; }
+  footer { margin-top:44px; padding-top:18px; border-top:1px solid #161b24;
+           color:#57606f; font-size:12px; }
+  footer a { color:#6b7688; }
 </style>
 </head>
 <body>
@@ -52,70 +47,55 @@
   <p class="sub">在浏览器里跑真正的 Linux 发行版，没有后端。</p>
 
   <h2>展位</h2>
+  <div id="booths"></div>
 
-  <a class="booth" href="/booths/alpine-desktop.html">
-    <div class="row">
-      <span class="name">Alpine Linux</span>
-      <span class="tag">图形桌面</span>
-    </div>
-    <p>完整的 i3 窗口管理器跑在 Xorg 上，帧缓冲直接刷进 canvas。
-       dmenu 里有 53 个应用，能开终端、GVim、文件管理器，也能玩扫雷。
-       首次引导 3–5 分钟；i3 是平铺式 WM，桌面本来就是纯黑的。</p>
-  </a>
-
-  <a class="booth" href="/booths/debian-terminal.html">
-    <div class="row">
-      <span class="name">Debian 10</span>
-      <span class="tag">终端</span>
-    </div>
-    <p>bash 直接接到页面，60 行代码。python3、gcc、vim 都能跑
-       —— 全是未修改的 x86 二进制，由 CheerpX 的 JIT 翻译成 WebAssembly。</p>
-  </a>
-
-  <div class="booth disabled">
-    <div class="row">
-      <span class="name">Ubuntu / Arch / Rocky</span>
-      <span class="tag wip">待构建</span>
-    </div>
-    <p>用 container2wasm 把 Docker 官方镜像转成 wasm，走终端模式。
-       需要先装 Docker 并清理磁盘空间。</p>
-  </div>
-
-  <h2>三条路的取舍</h2>
+  <h2>三条技术路线</h2>
   <table>
     <tr><th>方案</th><th>原理</th><th>发行版</th><th>速度</th><th>许可</th></tr>
-    <tr>
-      <td>CheerpX</td>
-      <td>x86 → WASM JIT</td>
-      <td>Debian、Alpine</td><td>最快</td>
-      <td>闭源，仅个人/开源免费</td>
-    </tr>
-    <tr>
-      <td>container2wasm</td>
-      <td>Bochs / TinyEMU 解释</td>
-      <td>任意 Docker 镜像</td><td>慢</td>
-      <td>Apache-2.0</td>
-    </tr>
-    <tr>
-      <td>linux-wasm</td>
-      <td>内核原生编译到 <code>arch/wasm</code></td>
-      <td>仅 BusyBox</td><td>无模拟开销</td>
-      <td>GPL，概念验证</td>
-    </tr>
+    <tr><td>CheerpX</td><td>x86 → WASM JIT</td><td>仅 i386</td><td>最快</td>
+        <td>闭源，个人/开源免费</td></tr>
+    <tr><td>container2wasm</td><td>Bochs / TinyEMU 解释</td><td>任意 Docker 镜像</td><td>慢</td>
+        <td>Apache-2.0</td></tr>
+    <tr><td>linux-wasm</td><td>内核编译到 <code>arch/wasm</code></td><td>仅 BusyBox</td>
+        <td>无模拟开销</td><td>GPL，概念验证</td></tr>
   </table>
 
-  <div class="note">
+  <div class="note-box">
+    <strong>为什么发行版都这么老</strong><br>
+    CheerpX 只能跑 <strong>32 位 x86</strong> 的根文件系统。Ubuntu 在 18.04 之后放弃了
+    i386，Arch 2017 年就停了 i686，Rocky/Alma 从来没有 i386 版本。
+    所以这里能跑的最新 Ubuntu 就是 2018 年的 18.04 —— 这是架构限制，不是没做。
+  </div>
+
+  <div class="note-box">
     <strong>为什么不能"把发行版编译成 WASM"</strong><br>
     WASM 缺的不是性能而是 Linux ABI：没有 <code>fork()</code>、没有 MMU、没有信号、
-    没有 ELF 动态链接器。所以可行的路要么是把 CPU 模拟器编译成 WASM 让原版镜像跑在里面，
-    要么像 linux-wasm 那样改内核去迁就 WASM —— 代价是 <code>fork</code> 和
-    <code>longjmp</code> 直接不支持。
+    没有 ELF 动态链接器。可行的路是把 CPU 模拟器编译成 WASM 让原版镜像跑在里面，
+    发行版一行代码都不用改 —— 它根本不知道自己在浏览器里。
   </div>
 
   <footer>
-    本地开发：<code>npm run dev</code>，必须带 COOP/COEP 响应头，
-    否则 SharedArrayBuffer 不可用、CheerpX 起不来。
+    源码与镜像构建流程：<a href="https://github.com/Shiqi-SQ/wasmos">github.com/Shiqi-SQ/wasmos</a>
   </footer>
 </main>
+
+<script type="module">
+import { BOOTHS } from './lib/booths.js';
+
+document.getElementById('booths').innerHTML = BOOTHS.map((b) => {
+  const ready = Boolean(b.diskImage);
+  const tag = b.mode === 'graphical' ? '图形桌面' : '终端';
+  return `
+    <${ready ? 'a' : 'div'} class="booth${ready ? '' : ' disabled'}"
+       ${ready ? `href="./booth.html?id=${b.id}"` : ''}>
+      <div class="row">
+        <span class="name">${b.name}</span>
+        ${b.codename ? `<span class="note">${b.codename}</span>` : ''}
+        <span class="tag${ready ? '' : ' wip'}">${ready ? tag : '待构建'}</span>
+      </div>
+      ${b.note ? `<p class="note">${b.note}</p>` : ''}
+    </${ready ? 'a' : 'div'}>`;
+}).join('');
+</script>
 </body>
 </html>
