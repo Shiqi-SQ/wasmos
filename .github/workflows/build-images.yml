@@ -20,28 +20,35 @@ permissions:
   contents: write   # 需要写 Releases
 
 jobs:
+  # 先把要构建的目标算成一个 JSON 数组，让矩阵只起需要的 runner。
+  # 之前用矩阵跑全部 + step 里 if 跳过，会白起 3 个 runner
+  # 且跳过的项也报 success，看不出到底构建了什么。
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.set.outputs.targets }}
+    steps:
+      - id: set
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          if [ "$TARGET" = "all" ]; then
+            echo 'targets=["debian-12","ubuntu-1804","centos-7"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "targets=[\"$TARGET\"]" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: plan
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        # all 时构建全部，否则只构建选中的那个（多余项在 step 里跳过）
-        target: [debian-12, ubuntu-1804, centos-7]
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: 判断是否需要构建本项
-        id: check
-        run: |
-          if [ "${{ inputs.target }}" = "all" ] || [ "${{ inputs.target }}" = "${{ matrix.target }}" ]; then
-            echo "run=yes" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=no" >> "$GITHUB_OUTPUT"
-            echo "跳过 ${{ matrix.target }}"
-          fi
-
       - name: 安装构建工具
-        if: steps.check.outputs.run == 'yes'
         run: |
           sudo apt-get update
           # buildah/podman 用来构建和展开容器；e2fsprogs 提供 mkfs.ext2
@@ -50,14 +57,13 @@ jobs:
           sudo apt-get install -y qemu-user-static binfmt-support || true
 
       - name: 构建容器镜像
-        if: steps.check.outputs.run == 'yes'
         run: |
-          buildah build --arch 386 --platform linux/386 \
+          # --platform 与 --arch 互斥，只能用其一
+          buildah build --platform linux/386 \
             -f dockerfiles/${{ matrix.target }} \
             -t wasmos-${{ matrix.target }} .
 
       - name: 导出为 ext2
-        if: steps.check.outputs.run == 'yes'
         env:
           # size 是自由文本输入，经环境变量传入而非直接插进命令
           IMG_SIZE: ${{ inputs.size }}
@@ -84,7 +90,6 @@ jobs:
           fi
 
       - name: 发布到 Releases
-        if: steps.check.outputs.run == 'yes'
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET: ${{ matrix.target }}
